@@ -1,0 +1,67 @@
+{
+  "name": "scriptsnap",
+  "version": "1.0.0",
+  "description": "AI-powered YouTube Shorts script generator with intelligent learning",
+  "author": "Rajiv",
+  "tools": [
+    {
+      "name": "generate_script",
+      "description": "Generate an AI script for YouTube Shorts with SEO metadata and 10 title variations. Learns from user ratings to improve over time.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "The topic for the script (e.g., 'Japanese tea ceremony')"
+          },
+          "duration": {
+            "type": "number",
+            "description": "Video duration in seconds (10-90)"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["Cultural & Historical", "Art & Design", "Science & Nature", "Fashion & Style", "Food & Craft", "Tech & Engineering"],
+            "description": "Content category"
+          },
+          "tone": {
+            "type": "string",
+            "enum": ["Meditative", "Balanced", "Energetic"],
+            "description": "Script tone/style"
+          },
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional keywords to incorporate"
+          },
+          "is_series": {
+            "type": "boolean",
+            "description": "Is this part of a series?"
+          }
+        },
+        "required": ["topic", "duration", "category", "tone"]
+      }
+    },
+    {
+      "name": "rate_script",
+      "description": "Rate a script (1-5 stars). AI learns to improve future scripts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "string",
+            "description": "ID of the script to rate"
+          },
+          "rating": {
+            "type": "number",
+            "description": "Rating from 1-5 stars"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Optional notes"
+          }
+        },
+        "required": ["script_id", "rating"]
+      }
+    }
+  ]
+}
