@@ -1,0 +1,18 @@
+{
+  "name": "scriptsnap-mcp",
+  "version": "1.0.0",
+  "description": "MCP connector for ScriptSnap - AI YouTube Shorts script generator",
+  "main": "mcp_server.ts",
+  "scripts": {
+    "start": "ts-node mcp_server.ts",
+    "dev": "ts-node --watch mcp_server.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}
