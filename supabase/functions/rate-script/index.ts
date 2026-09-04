@@ -12,6 +12,10 @@ Deno.serve(async (req) => {
     if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
 
     const body = await req.json()
+    if (!Number.isInteger(body.rating) || body.rating < 1 || body.rating > 5) {
+      return new Response(JSON.stringify({ error: 'rating must be an integer between 1 and 5' }), { status: 400 })
+    }
+
     const { data: script } = await supabase.from('scripts').select('*').eq('id', body.script_id).eq('user_id', user.id).single()
     if (!script) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
 
