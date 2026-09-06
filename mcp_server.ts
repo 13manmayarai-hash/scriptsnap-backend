@@ -1,101 +1,68 @@
-import Anthropic from "@anthropic-ai/sdk";
+#!/usr/bin/env node
+// Real MCP server for ScriptSnap. Replaces the previous mcp_server.ts, which
+// was not an MCP server at all -- it used the raw Anthropic SDK's tool-use
+// format (not the MCP protocol), had no transport (stdio/HTTP), and
+// authenticated edge-function calls with a literal placeholder string
+// ("demo_jwt_token_" + userId) that Supabase would reject outright.
+//
+// This server exposes ONE tool for now: generate_script, wired to the
+// personalization loop that's the actual differentiator here -- every call
+// pulls your top-performing keywords and tone ratings (from real ratings
+// you've given past scripts) and feeds them into the prompt, then reports
+// back exactly what was used so it's verifiable, not a black box.
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 
-const client = new Anthropic();
-
-// Your Supabase project details
 const SUPABASE_URL = "https://slcasxwdsygaqxwsocwg.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsY2FzeHdkc3lnYXF4d3NvY3dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3MjQ0OTgsImV4cCI6MjEwMjMwMDQ5OH0.bTZnM-mKN3kafqFDB2WTKyIk8LLgqHlhXInMDzJ9YUI";
 const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
 
-// Store user JWT tokens (in real app, get from auth)
-const userTokens: Record<string, string> = {};
+// Real auth: the caller's own ScriptSnap email/password, signed in against
+// Supabase's actual auth API -- not a placeholder. Requires the account to
+// have email/password enabled (it does -- see app/auth/login and
+// app/auth/signup in scriptsnap-dashboard); a Google-OAuth-only account
+// would need a password set first via "Forgot password".
+const EMAIL = process.env.SCRIPTSNAP_EMAIL;
+const PASSWORD = process.env.SCRIPTSNAP_PASSWORD;
 
-// Tool definitions matching server.json
-const tools = [
-  {
-    name: "generate_script",
-    description:
-      "Generate an AI script for YouTube Shorts with SEO metadata and 10 title variations",
-    input_schema: {
-      type: "object",
-      properties: {
-        topic: {
-          type: "string",
-          description: "The topic for the script",
-        },
-        duration: {
-          type: "number",
-          description: "Video duration in seconds (10-90)",
-        },
-        category: {
-          type: "string",
-          enum: [
-            "Cultural & Historical",
-            "Art & Design",
-            "Science & Nature",
-            "Fashion & Style",
-            "Food & Craft",
-            "Tech & Engineering",
-          ],
-          description: "Content category",
-        },
-        tone: {
-          type: "string",
-          enum: ["Meditative", "Balanced", "Energetic"],
-          description: "Script tone/style",
-        },
-        keywords: {
-          type: "array",
-          items: { type: "string" },
-          description: "Optional keywords to incorporate",
-        },
-        is_series: {
-          type: "boolean",
-          description: "Is this part of a series?",
-        },
-      },
-      required: ["topic", "duration", "category", "tone"],
-    },
-  },
-  {
-    name: "rate_script",
-    description: "Rate a script (1-5 stars) to help AI learn",
-    input_schema: {
-      type: "object",
-      properties: {
-        script_id: {
-          type: "string",
-          description: "ID of the script to rate",
-        },
-        rating: {
-          type: "number",
-          description: "Rating from 1-5 stars",
-        },
-        notes: {
-          type: "string",
-          description: "Optional notes about the rating",
-        },
-      },
-      required: ["script_id", "rating"],
-    },
-  },
-];
+if (!EMAIL || !PASSWORD) {
+  console.error(
+    "Missing SCRIPTSNAP_EMAIL / SCRIPTSNAP_PASSWORD env vars. Set these to " +
+      "your ScriptSnap account credentials (email/password sign-in must be " +
+      "enabled on the account -- use 'Forgot password' first if you normally " +
+      "sign in with Google)."
+  );
+  process.exit(1);
+}
 
-// Call Edge Functions
-async function callEdgeFunction(
-  functionName: string,
-  input: Record<string, unknown>,
-  userId: string
-): Promise<unknown> {
-  // Get or create JWT token for user
-  let token = userTokens[userId];
+const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  if (!token) {
-    // In a real app, get this from Supabase auth
-    // For now, use a demo token
-    token = "demo_jwt_token_" + userId;
-    userTokens[userId] = token;
+// Cached across tool calls within one server run; supabase-js refreshes the
+// underlying session automatically, but we re-derive the access token per
+// call rather than trusting a long-lived local copy.
+let signedIn = false;
+
+async function getAccessToken(): Promise<string> {
+  if (!signedIn) {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: EMAIL!,
+      password: PASSWORD!,
+    });
+    if (error) throw new Error(`ScriptSnap sign-in failed: ${error.message}`);
+    signedIn = true;
   }
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session) {
+    throw new Error(`No active ScriptSnap session: ${error?.message ?? "unknown"}`);
+  }
+  return data.session.access_token;
+}
 
+async function callEdgeFunction(functionName: string, input: Record<string, unknown>) {
+  const token = await getAccessToken();
   const response = await fetch(`${FUNCTIONS_URL}/${functionName}`, {
     method: "POST",
     headers: {
@@ -104,138 +71,95 @@ async function callEdgeFunction(
     },
     body: JSON.stringify(input),
   });
-
+  const json = await response.json();
   if (!response.ok) {
-    throw new Error(`Function call failed: ${response.statusText}`);
+    throw new Error(json?.error ?? `${functionName} failed (${response.status})`);
   }
-
-  return response.json();
+  return json;
 }
 
-// Process tool calls
-async function processToolCall(
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  userId: string
-): Promise<string> {
-  try {
-    if (toolName === "generate_script") {
-      const result = await callEdgeFunction(
-        "generate-script",
-        {
-          topic: toolInput.topic,
-          duration: toolInput.duration,
-          category: toolInput.category,
-          tone: toolInput.tone,
-          keywords: toolInput.keywords || [],
-          is_series: toolInput.is_series || false,
-          tone_index: ["Meditative", "Balanced", "Energetic"].indexOf(
-            toolInput.tone as string
-          ) + 1,
-        },
-        userId
-      );
-      return JSON.stringify(result);
-    } else if (toolName === "rate_script") {
-      const result = await callEdgeFunction(
-        "rate-script",
-        {
-          script_id: toolInput.script_id,
-          rating: toolInput.rating,
-          notes: toolInput.notes,
-        },
-        userId
-      );
-      return JSON.stringify(result);
-    }
-    return JSON.stringify({ error: "Unknown tool" });
-  } catch (error) {
-    return JSON.stringify({
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-  }
-}
+const server = new McpServer({
+  name: "scriptsnap-mcp",
+  version: "2.0.0",
+});
 
-// Main agent loop
-async function runAgent(userMessage: string, userId: string): Promise<void> {
-  console.log(`\n${"=".repeat(50)}`);
-  console.log(`User: ${userMessage}`);
-  console.log("=".repeat(50));
-
-  const messages: Anthropic.Messages.MessageParam[] = [
-    {
-      role: "user",
-      content: userMessage,
+server.registerTool(
+  "generate_script",
+  {
+    title: "Generate ScriptSnap script",
+    description:
+      "Generate a personalized YouTube Shorts script. Pulls your top-performing " +
+      "keywords and tone ratings from past scripts you've rated on ScriptSnap " +
+      "and feeds them into the prompt -- the response tells you exactly which " +
+      "signals were used, so you can see the personalization working rather " +
+      "than trusting it blindly.",
+    inputSchema: {
+      topic: z.string().describe("The topic for the script"),
+      duration: z.number().min(10).max(90).describe("Video duration in seconds (10-90)"),
+      category: z
+        .enum([
+          "Cultural & Historical",
+          "Art & Design",
+          "Science & Nature",
+          "Fashion & Style",
+          "Food & Craft",
+          "Tech & Engineering",
+        ])
+        .describe("Content category"),
+      tone: z.enum(["Meditative", "Balanced", "Energetic"]).describe("Script tone/style"),
+      keywords: z.array(z.string()).optional().describe("Optional keywords to incorporate"),
+      is_series: z.boolean().optional().describe("Is this part of a series?"),
     },
-  ];
-
-  // Agentic loop
-  while (true) {
-    const response = await client.messages.create({
-      model: "claude-opus-4-1",
-      max_tokens: 1024,
-      tools: tools as Anthropic.Messages.Tool[],
-      messages: messages,
-    });
-
-    console.log(`\nClaude (stop_reason: ${response.stop_reason}):`);
-
-    // Check if we should stop
-    if (response.stop_reason === "end_turn") {
-      // Extract final text response
-      for (const block of response.content) {
-        if (block.type === "text") {
-          console.log(block.text);
-        }
-      }
-      break;
-    }
-
-    // Process tool uses
-    const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
-
-    for (const block of response.content) {
-      if (block.type === "text") {
-        console.log(block.text);
-      } else if (block.type === "tool_use") {
-        console.log(`\nTool: ${block.name}`);
-        console.log(`Input: ${JSON.stringify(block.input, null, 2)}`);
-
-        const result = await processToolCall(
-          block.name,
-          block.input as Record<string, unknown>,
-          userId
-        );
-        console.log(`Result: ${result}`);
-
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: result,
-        });
-      }
-    }
-
-    // Add assistant response and tool results to messages
-    messages.push({
-      role: "assistant",
-      content: response.content,
-    });
-
-    if (toolResults.length > 0) {
-      messages.push({
-        role: "user",
-        content: toolResults,
+  },
+  async ({ topic, duration, category, tone, keywords, is_series }) => {
+    try {
+      const result = await callEdgeFunction("generate-script", {
+        topic,
+        duration,
+        category,
+        tone,
+        keywords: keywords ?? [],
+        is_series: is_series ?? false,
       });
-    } else {
-      // No tool calls, we're done
-      break;
+
+      const p = result.personalization ?? { keywordsUsed: [], toneStatsUsed: [] };
+      const personalizationNote =
+        p.keywordsUsed.length > 0 || p.toneStatsUsed.length > 0
+          ? `\n\nPersonalized using: ${
+              p.keywordsUsed.length > 0 ? `top keywords [${p.keywordsUsed.join(", ")}]` : ""
+            }${p.keywordsUsed.length > 0 && p.toneStatsUsed.length > 0 ? "; " : ""}${
+              p.toneStatsUsed.length > 0
+                ? `tone ratings [${p.toneStatsUsed
+                    .map((t: any) => `${t.tone}: ${t.avg_rating} stars`)
+                    .join(", ")}]`
+                : ""
+            }`
+          : "\n\n(No personalization signal yet -- rate a few scripts on ScriptSnap and this will kick in.)";
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${result.script?.script ?? "(no script returned)"}${personalizationNote}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
     }
   }
+);
+
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("scriptsnap-mcp running on stdio");
 }
 
-// Run example
-runAgent(
-  "Generate me a YouTube Shorts script about Japanese pottery, 30 seconds, meditative tone, with keywords 'handmade' and 'clay'",
-  "demo_user_123"
-).catch(console.error);
+main().catch((err) => {
+  console.error("Fatal error in main():", err);
+  process.exit(1);
+});

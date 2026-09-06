@@ -99,7 +99,18 @@ Respond ONLY in JSON: { script, title, description, hashtags (array), pinnedComm
 
       if (insertError) throw insertError
 
-      return new Response(JSON.stringify({ success: true, script: savedScript }), { headers: { 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({
+        success: true,
+        script: savedScript,
+        // Surfaces what actually drove personalization for this
+        // generation — previously this was baked into the prompt with no
+        // way for a caller to see whether it applied, which made "learns
+        // from your ratings" unverifiable from the outside.
+        personalization: {
+          keywordsUsed: (topKeywords ?? []).map((k: any) => k.keyword),
+          toneStatsUsed: toneStats ?? [],
+        },
+      }), { headers: { 'Content-Type': 'application/json' } })
     } catch (innerError) {
       // Reserved a quota slot above but never produced a script — refund it,
       // same compensating pattern the dashboard's route already uses.

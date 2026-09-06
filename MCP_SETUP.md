@@ -1,126 +1,80 @@
-# ScriptSnap MCP Connector Setup
+# ScriptSnap MCP Server Setup
 
-This MCP connector integrates ScriptSnap with Claude.ai, allowing users to generate YouTube Shorts scripts directly in their Claude conversations.
+Real MCP protocol server (uses `@modelcontextprotocol/sdk`) exposing one
+tool so far: `generate_script`, wired to the personalization loop that's
+ScriptSnap's actual differentiator — it pulls your top-performing keywords
+and tone ratings (from scripts you've rated) into the prompt, and reports
+back exactly which signals were used.
 
-## What is MCP?
+This replaces an earlier `mcp_server.ts` that was not a real MCP server —
+it used the raw Anthropic SDK's tool-use format with no MCP transport, and
+authenticated Edge Function calls with a literal placeholder string
+(`"demo_jwt_token_" + userId`) that Supabase would reject.
 
-Model Context Protocol (MCP) is Anthropic's standard for connecting Claude to tools and services. Once registered, any Claude user can use your tools.
+## Files
 
-## Files in this Connector
+- `server.json` — tool metadata (kept in sync with what's actually implemented)
+- `mcp_server.ts` — the real MCP server (stdio transport)
+- `package.json` / `tsconfig.json` — build config
 
-- `server.json` - Tool definitions (what Claude sees)
-- `mcp_server.ts` - Implementation (handles requests)
-- `package.json` - Dependencies
+## Auth
 
-## How It Works
+The server signs in with your real ScriptSnap account (email + password)
+against Supabase's actual auth API, then forwards that session's access
+token as a Bearer header to the Edge Functions — the same auth path the
+web dashboard uses, not a placeholder.
 
-1. User in Claude says: "Generate a script about Japanese pottery"
-2. Claude calls → MCP Server → Supabase Edge Functions → Claude API → Returns script
-3. User rates the script
-4. AI learns from rating for next time
+```bash
+export SCRIPTSNAP_EMAIL="you@example.com"
+export SCRIPTSNAP_PASSWORD="your-scriptsnap-password"
+```
 
-## Authentication Flow
+If your account normally signs in via Google, it may not have a password
+set — use "Forgot password" on the login page once to set one; email/
+password sign-in is enabled on the account either way.
 
-Currently uses demo JWT tokens. For production:
+## Build & run locally
 
-1. Users authenticate via Supabase (email/password)
-2. Get JWT token from `supabase.auth.getSession()`
-3. MCP server passes token to Edge Functions
-4. Edge Functions validate and execute
-5. Results returned to user
+```bash
+npm install
+npm run build
+npm start        # runs on stdio, waits for a client
+```
 
-## Registering with Claude
+## Using from Claude Code / Claude Desktop
 
-### Option 1: Claude.ai (Recommended)
-1. Go to: https://claude.ai
-2. Open Settings → Integrations
-3. Click "Add Tool"
-4. Choose "Upload MCP Server"
-5. Select `server.json`
-6. Claude configures automatically
-
-### Option 2: Claude Desktop (Advanced)
-1. Edit `~/.claude/config.json`
-2. Add this entry:
 ```json
 {
   "mcpServers": {
     "scriptsnap": {
-      "command": "ts-node",
-      "args": ["mcp_server.ts"]
+      "command": "node",
+      "args": ["/full/path/to/scriptsnap-backend/dist/mcp_server.js"],
+      "env": {
+        "SCRIPTSNAP_EMAIL": "you@example.com",
+        "SCRIPTSNAP_PASSWORD": "your-scriptsnap-password"
+      }
     }
   }
 }
 ```
-3. Restart Claude Desktop
 
-## Environment Variables
+## Verified so far
 
-The MCP server uses:
-- `SUPABASE_URL` - Your project URL (set in Supabase)
-- `ANTHROPIC_API_KEY` - Claude API key (for agentic loop)
-- `SUPABASE_SERVICE_ROLE_KEY` - For Edge Function auth
+- MCP handshake + tool schema: tested directly over stdio, works.
+- `generate-script` Edge Function: deployed, compiles, personalization
+  RPCs fixed (see repo history) and confirmed reachable with a real user
+  token in the same session.
+- End-to-end call through this MCP server with real ScriptSnap
+  credentials: **not yet tested** — needs a real `SCRIPTSNAP_EMAIL`/
+  `SCRIPTSNAP_PASSWORD` to try. Do that next.
 
-Already configured in Supabase secrets.
+## Not built yet (deliberately out of scope for this pass)
 
-## Testing
-
-```bash
-npm install
-npm start
-```
-
-Then in Claude:
-```
-Generate a script about sustainable fashion, 45 seconds, energetic tone
-```
-
-## Functions Available
-
-### generate_script
-Generates AI scripts with:
-- Full script text
-- SEO title
-- Description
-- 4 hashtags
-- Pinned comment question
-- 10 alternative titles (different styles)
-
-**Input:**
-```json
-{
-  "topic": "Japanese pottery",
-  "duration": 30,
-  "category": "Art & Design",
-  "tone": "Meditative",
-  "keywords": ["handmade", "clay"],
-  "is_series": false
-}
-```
-
-### rate_script
-Rate a script to train the AI learning engine.
-
-**Input:**
-```json
-{
-  "script_id": "abc123",
-  "rating": 5,
-  "notes": "Perfect for our audience"
-}
-```
-
-## Next Steps
-
-1. ✅ Backend deployed (Edge Functions)
-2. ✅ MCP server created
-3. → **Register with Claude.ai** (coming next)
-4. → **Build Next.js dashboard** (optional)
-5. → **Add Stripe payments** (monetization)
-
-## Support
-
-Issues? Check:
-- Supabase Edge Functions logs
-- GitHub Actions deployment logs
-- Claude MCP documentation
+- `rate_script` as an MCP tool (the natural pairing — without it, ratings
+  given via MCP can't feed the same learning loop; ratings still work fine
+  through the web dashboard).
+- HTTP transport for a shared/public connector (this is stdio-only,
+  single-user, run locally per person). The old `snapscript` connector
+  entry pointing at a Vercel URL doesn't correspond to anything here yet —
+  that's a separate, bigger build (real OAuth so a hosted server can tell
+  users apart, not just one person's stdio process).

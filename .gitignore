@@ -1,8 +1,2 @@
-.env
-.env.local
-.env.*.local
-.supabase/
 node_modules/
-*.log
-logs/
-.DS_Store
+dist/
