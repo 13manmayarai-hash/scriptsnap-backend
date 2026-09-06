@@ -40,6 +40,28 @@
         },
         "required": ["topic", "duration", "category", "tone"]
       }
+    },
+    {
+      "name": "rate_script",
+      "description": "Rate a generated script thumbs up or down. This feeds the personalization generate_script uses -- updates keyword and tone performance stats immediately.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "script_id": {
+            "type": "string",
+            "description": "ID of the script to rate (from a prior generate_script call)"
+          },
+          "liked": {
+            "type": "boolean",
+            "description": "true = thumbs up (helpful), false = thumbs down (not helpful)"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Optional notes about why"
+          }
+        },
+        "required": ["script_id", "liked"]
+      }
     }
   ]
 }

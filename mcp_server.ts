@@ -153,6 +153,43 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "rate_script",
+  {
+    title: "Rate a ScriptSnap script",
+    description:
+      "Rate a generated script thumbs up or down. This is what actually feeds " +
+      "the personalization generate_script uses — a rating updates your " +
+      "keyword and tone performance stats immediately, so the next " +
+      "generate_script call reflects it.",
+    inputSchema: {
+      script_id: z.string().describe("ID of the script to rate (from a prior generate_script call)"),
+      liked: z.boolean().describe("true = thumbs up (helpful), false = thumbs down (not helpful)"),
+      notes: z.string().optional().describe("Optional notes about why"),
+    },
+  },
+  async ({ script_id, liked, notes }) => {
+    try {
+      await callEdgeFunction("rate-script", { script_id, liked, notes });
+      return {
+        content: [
+          {
+            type: "text",
+            text: liked
+              ? "Rated thumbs up — this script's tone and keywords will be weighted higher next time."
+              : "Rated thumbs down — this script's tone and keywords will be weighted lower next time.",
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

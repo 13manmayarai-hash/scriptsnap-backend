@@ -70,9 +70,6 @@ npm start        # runs on stdio, waits for a client
 
 ## Not built yet (deliberately out of scope for this pass)
 
-- `rate_script` as an MCP tool (the natural pairing — without it, ratings
-  given via MCP can't feed the same learning loop; ratings still work fine
-  through the web dashboard).
 - HTTP transport for a shared/public connector (this is stdio-only,
   single-user, run locally per person). The old `snapscript` connector
   entry pointing at a Vercel URL doesn't correspond to anything here yet —
