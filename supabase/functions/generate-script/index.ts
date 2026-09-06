@@ -74,7 +74,7 @@ ${learningNote}
 Respond ONLY in JSON: { script, title, description, hashtags (array), pinnedComment, alternativeTitles (array of 10 with style+title) }`
 
       const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-5',
         max_tokens: 1500,
         messages: [{ role: 'user', content: prompt }]
       })
